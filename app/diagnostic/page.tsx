@@ -241,7 +241,11 @@ export default function DiagnosticPage() {
           // IMPORTANT: API expects serviceCodes, not requiredServices
           body: JSON.stringify({
             serviceCodes: requiredServices,
-            severity: overallSeverity,
+            severity:
+                overallSeverity === "EMERGENCY"
+                ? "emergency"
+                : "routine",
+
           }),
           signal: controller.signal,
         });
