@@ -231,25 +231,42 @@ export default function DiagnosticPage() {
     const controller = new AbortController();
 
     async function run() {
-      setPlumbersLoading(true);
-      setPlumbersError(null);
-
-      try {
-        const res = await fetch("/api/match-plumbers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // IMPORTANT: API expects serviceCodes, not requiredServices
-          body: JSON.stringify({
-            serviceCodes: requiredServices,
-            severity:
-                overallSeverity === "EMERGENCY"
-                ? "emergency"
-                : "routine",
-
-          }),
-          signal: controller.signal,
-        });
-
+        setPlumbersLoading(true);
+        setPlumbersError(null);
+      
+        // ✅ Map UI severity → API severity (THIS IS THE FIX)
+        const apiSeverity: "routine" | "urgent" | "emergency" =
+          issues.some((i) => i.emergency) ? "emergency" : "routine";
+      
+        try {
+          const res = await fetch("/api/match-plumbers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              serviceCodes: requiredServices,
+              severity: apiSeverity,
+            }),
+            signal: controller.signal,
+          });
+      
+          const data = await res.json();
+      
+          if (!res.ok || !data?.ok) {
+            setMatchedPlumbers([]);
+            setPlumbersError(data?.error ?? "Failed to match plumbers.");
+            return;
+          }
+      
+          setMatchedPlumbers(Array.isArray(data.plumbers) ? data.plumbers : []);
+        } catch (e: any) {
+          if (e?.name === "AbortError") return;
+          setMatchedPlumbers([]);
+          setPlumbersError("Network/server error while matching plumbers.");
+        } finally {
+          setPlumbersLoading(false);
+        }
+      }
+      
         const data = await res.json();
 
         if (!res.ok || !data?.ok) {
