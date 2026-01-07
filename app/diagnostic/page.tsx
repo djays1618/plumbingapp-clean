@@ -112,6 +112,7 @@ export default function DiagnosticPage() {
   const [plumbersLoading, setPlumbersLoading] = useState(false);
   const [plumbersError, setPlumbersError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [pendingServiceCode, setPendingServiceCode] = useState<string | null>(null);
   const [contactInfo, setContactInfo] = useState<ContactInfo>({
     name: "",
     phone: "",
@@ -130,22 +131,49 @@ export default function DiagnosticPage() {
     const updated = { ...answers, [step.id]: option.label };
     setAnswers(updated);
 
+    // If there's a nextStep, go to it (but save service code if result exists)
     if (option.nextStep) {
+      // If this step has a result (service code), save it for after emergency check
+      if (option.result && typeof option.result === "string" && option.result !== "EMERGENCY" && option.result !== "NON_EMERGENCY") {
+        setPendingServiceCode(option.result);
+      }
       setStepId(option.nextStep);
       return;
     }
 
     if (option.result) {
-      // Handle emergency check step separately - it doesn't create a new issue
+      // Handle emergency check step - create issue with pending service code
       if (step.id === "emergency_check") {
-        // Emergency check is complete, go to summary
+        // Emergency check is complete, now create the issue
+        if (pendingServiceCode) {
+          const norm = normalizeFromWizardAnswers(updated);
+          
+          // Map diagnostic code to actual service code used in plumbers.json
+          const serviceCode = mapDiagnosticCodeToServiceCode(pendingServiceCode);
+
+          console.log("Adding issue after emergency check:", { reported: norm.reported, diagnosticCode: pendingServiceCode, serviceCode, emergency: norm.emergency });
+
+          setIssues((prev) => [
+            ...prev,
+            {
+              id: uid(),
+              reported: norm.reported,
+              emergency: norm.emergency,
+              serviceCode,
+            },
+          ]);
+
+          setPendingServiceCode(null);
+        }
+        
+        // Go to summary
         setMode("summary");
         setAnswers({});
         setStepId("location");
         return;
       }
 
-      // For other steps with results, create an issue
+      // For other steps with results (shouldn't happen with current tree structure, but handle it)
       const norm = normalizeFromWizardAnswers(updated);
 
       const diagnostic = computeDiagnosticResult({
