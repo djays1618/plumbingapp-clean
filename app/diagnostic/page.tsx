@@ -110,6 +110,7 @@ export default function DiagnosticPage() {
   const [matchedPlumbers, setMatchedPlumbers] = useState<RankedPlumber[]>([]);
   const [plumbersLoading, setPlumbersLoading] = useState(false);
   const [plumbersError, setPlumbersError] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   const [contactInfo, setContactInfo] = useState<ContactInfo>({
     name: "",
     phone: "",
@@ -124,6 +125,7 @@ export default function DiagnosticPage() {
   ───────────────────────────────────────────── */
 
   function handleOption(option: any) {
+    if (!step) return;
     const updated = { ...answers, [step.id]: option.label };
     setAnswers(updated);
 
@@ -142,13 +144,21 @@ export default function DiagnosticPage() {
         urgency: norm.urgency,
       });
 
+      // Use option.result if it's a string (service code from diagnostic tree),
+      // otherwise fall back to diagnostic.primaryServiceCode
+      const serviceCode = typeof option.result === "string" && option.result.trim().length > 0
+        ? option.result
+        : diagnostic.primaryServiceCode;
+
+      console.log("Adding issue:", { reported: norm.reported, serviceCode, emergency: norm.emergency });
+
       setIssues((prev) => [
         ...prev,
         {
           id: uid(),
           reported: norm.reported,
           emergency: norm.emergency,
-          serviceCode: diagnostic.primaryServiceCode,
+          serviceCode,
         },
       ]);
 
@@ -162,13 +172,13 @@ export default function DiagnosticPage() {
      Derived values
   ───────────────────────────────────────────── */
 
-  const overallSeverity: "EMERGENCY" | "NON_EMERGENCY" = useMemo(
-    () => (issues.some((i) => i.emergency) ? "EMERGENCY" : "NON_EMERGENCY"),
-    [issues]
-  );
-
   const requiredServices = useMemo(
-    () => Array.from(new Set(issues.map((i) => i.serviceCode))),
+    () => {
+      const services = issues
+        .map((i) => i.serviceCode)
+        .filter((code): code is string => typeof code === "string" && code.trim().length > 0);
+      return Array.from(new Set(services));
+    },
     [issues]
   );
 
@@ -177,8 +187,15 @@ export default function DiagnosticPage() {
   ───────────────────────────────────────────── */
 
   useEffect(() => {
-    if (mode !== "summary") return;
-    if (issues.length === 0 || requiredServices.length === 0) return;
+    console.log("useEffect triggered:", { mode, issuesCount: issues.length, requiredServices });
+    if (mode !== "summary") {
+      console.log("Not in summary mode, skipping");
+      return;
+    }
+    if (issues.length === 0 || requiredServices.length === 0) {
+      console.log("No issues or services, skipping");
+      return;
+    }
 
     const controller = new AbortController();
 
@@ -190,27 +207,50 @@ export default function DiagnosticPage() {
         issues.some((i) => i.emergency) ? "emergency" : "routine";
 
       try {
+        // Ensure we have valid service codes
+        if (!requiredServices || requiredServices.length === 0) {
+          console.error("No valid service codes found", { issues, requiredServices });
+          setPlumbersError("No valid service codes found. Please try again.");
+          setPlumbersLoading(false);
+          return;
+        }
+
+        const requestBody = {
+          serviceCodes: requiredServices,
+          severity: apiSeverity,
+        };
+
+        console.log("Fetching plumbers with:", requestBody);
+
         const res = await fetch("/api/match-plumbers", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serviceCodes: requiredServices,
-            severity: apiSeverity,
-          }),
+          body: JSON.stringify(requestBody),
           signal: controller.signal,
         });
 
         const data = await res.json();
+        console.log("API response:", { ok: data?.ok, plumbersCount: data?.plumbers?.length, error: data?.error, debug: data?.debug });
+
+        // Store debug info for display
+        if (data?.debug) {
+          setDebugInfo(data.debug);
+        }
 
         if (!res.ok || !data?.ok) {
           setMatchedPlumbers([]);
-          setPlumbersError(data?.error ?? "Failed to match plumbers.");
+          const errorMsg = data?.error ?? "Failed to match plumbers.";
+          console.error("API error:", errorMsg, data);
+          setPlumbersError(errorMsg);
           return;
         }
 
-        setMatchedPlumbers(Array.isArray(data.plumbers) ? data.plumbers : []);
+        const plumbers = Array.isArray(data.plumbers) ? data.plumbers : [];
+        console.log("Setting matched plumbers:", plumbers.length, plumbers);
+        setMatchedPlumbers(plumbers);
       } catch (e: any) {
         if (e?.name !== "AbortError") {
+          console.error("Fetch error:", e);
           setPlumbersError("Network/server error.");
           setMatchedPlumbers([]);
         }
@@ -235,17 +275,83 @@ export default function DiagnosticPage() {
         {issues.map((i) => (
           <div key={i.id} className="border p-4 rounded mb-3">
             <div><strong>Issue:</strong> {i.reported}</div>
-            <div><strong>Service:</strong> {resultCatalog[i.serviceCode]?.label}</div>
+            <div><strong>Service:</strong> {resultCatalog[i.serviceCode]?.label ?? i.serviceCode}</div>
             <div><strong>Emergency:</strong> {i.emergency ? "Yes" : "No"}</div>
           </div>
         ))}
 
-        {plumbersLoading && <p>Loading plumbers…</p>}
-        {plumbersError && <p className="text-red-600">{plumbersError}</p>}
+        {/* MATCHING PLUMBERS */}
+        <section className="mt-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-3">
+            Available Plumbers
+          </h2>
+
+          {plumbersLoading && (
+            <p className="text-gray-600 mb-4">Loading plumbers…</p>
+          )}
+          
+          {plumbersError && (
+            <p className="text-red-600 mb-4">{plumbersError}</p>
+          )}
+
+          {!plumbersLoading && !plumbersError && matchedPlumbers.length === 0 && (
+            <div className="text-gray-600 mb-4">
+              <p className="mb-2">
+                No plumbers found matching your service needs.
+              </p>
+              {debugInfo && (
+                <details className="mt-2 text-xs">
+                  <summary className="cursor-pointer text-blue-600">Debug Info</summary>
+                  <pre className="mt-2 p-2 bg-gray-100 rounded overflow-auto text-xs">
+                    {JSON.stringify(debugInfo, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+
+          {!plumbersLoading && matchedPlumbers.length > 0 && (
+            <div className="space-y-4">
+              {matchedPlumbers.map((plumber) => (
+                <div
+                  key={plumber.id || plumber.name}
+                  className="border rounded-lg p-4 bg-gray-50 hover:bg-gray-100"
+                >
+                  <div className="font-semibold text-gray-900 mb-2 text-lg">
+                    {plumber.name}
+                  </div>
+                  <div className="text-sm text-gray-700 space-y-1">
+                    <div>
+                      <strong>Phone:</strong> {plumber.phone}
+                    </div>
+                    {plumber.email && (
+                      <div>
+                        <strong>Email:</strong> {plumber.email}
+                      </div>
+                    )}
+                    {plumber.location && (
+                      <div>
+                        <strong>Location:</strong> {plumber.location}
+                      </div>
+                    )}
+                    {plumber.matchedServices && plumber.matchedServices.length > 0 && (
+                      <div className="mt-2 pt-2 border-t">
+                        <strong>Services Offered:</strong>{" "}
+                        <span className="text-gray-600">
+                          {plumber.matchedServices.join(", ")}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         <button
           onClick={() => setMode("wizard")}
-          className="mt-6 border px-4 py-2 rounded"
+          className="mt-6 border px-4 py-2 rounded hover:bg-gray-50"
         >
           Add another issue
         </button>

@@ -18,15 +18,15 @@ export function matchPlumbersByAllServices(
  */
 export function rankPlumbersForJob(params: {
   serviceCodes: string[];
-  severity: "EMERGENCY" | "NON_EMERGENCY";
+  severity: "EMERGENCY" | "URGENT" | "ROUTINE";
 }) {
   const { serviceCodes, severity } = params;
 
   // 1️⃣ Require ALL services
   let matched = matchPlumbersByAllServices(serviceCodes);
 
-  // 2️⃣ HARD emergency gate
-  if (severity === "EMERGENCY") {
+  // 2️⃣ HARD emergency gate - both EMERGENCY and URGENT require emergency-capable plumbers
+  if (severity === "EMERGENCY" || severity === "URGENT") {
     matched = matched.filter((plumber: any) =>
       plumber.services.includes("EMERGENCY_PLUMBING")
     );
@@ -41,10 +41,11 @@ export function rankPlumbersForJob(params: {
     const emergencyCapable =
       plumber.services.includes("EMERGENCY_PLUMBING");
 
+    // Scoring: prioritize emergency-capable plumbers for urgent/emergency jobs
     const score =
       exactMatches * 100 +
-      (severity === "NON_EMERGENCY" ? 10 : 0) +
-      (severity === "EMERGENCY" && emergencyCapable ? 50 : 0);
+      (severity === "ROUTINE" ? 10 : 0) +
+      ((severity === "EMERGENCY" || severity === "URGENT") && emergencyCapable ? 50 : 0);
 
     return {
       ...plumber,

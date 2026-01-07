@@ -21,14 +21,35 @@ export async function POST(req: Request) {
       severity === "urgent" ||
       severity === "emergency";
 
-    if (
-      !Array.isArray(serviceCodes) ||
-      serviceCodes.length === 0 ||
-      !serviceCodes.every((x) => typeof x === "string") ||
-      !validSeverity
-    ) {
+    // Detailed validation with specific error messages
+    if (!Array.isArray(serviceCodes)) {
+      console.error("Validation failed: serviceCodes is not an array", { serviceCodes, type: typeof serviceCodes });
       return NextResponse.json(
-        { ok: false, error: "Invalid request payload" },
+        { ok: false, error: "Invalid request payload: serviceCodes must be an array" },
+        { status: 400 }
+      );
+    }
+
+    if (serviceCodes.length === 0) {
+      console.error("Validation failed: serviceCodes array is empty", { serviceCodes });
+      return NextResponse.json(
+        { ok: false, error: "Invalid request payload: serviceCodes array cannot be empty" },
+        { status: 400 }
+      );
+    }
+
+    if (!serviceCodes.every((x) => typeof x === "string")) {
+      console.error("Validation failed: serviceCodes contains non-string values", { serviceCodes });
+      return NextResponse.json(
+        { ok: false, error: "Invalid request payload: all serviceCodes must be strings" },
+        { status: 400 }
+      );
+    }
+
+    if (!validSeverity) {
+      console.error("Validation failed: invalid severity", { severity, type: typeof severity });
+      return NextResponse.json(
+        { ok: false, error: `Invalid request payload: severity must be "routine", "urgent", or "emergency", got: ${severity}` },
         { status: 400 }
       );
     }
@@ -36,9 +57,17 @@ export async function POST(req: Request) {
     // ─────────────────────────────────────────────
     // RANK PLUMBERS
     // ─────────────────────────────────────────────
+    // Map API severity to internal format (preserves all three levels)
+    const internalSeverity =
+      severity === "emergency"
+        ? "EMERGENCY"
+        : severity === "urgent"
+        ? "URGENT"
+        : "ROUTINE";
+    
     const rankedPlumbers = rankPlumbersForJob({
       serviceCodes,
-      severity: severity as ApiSeverity,
+      severity: internalSeverity,
     });
 
     const response = rankedPlumbers.map((plumber: any) => ({
@@ -65,7 +94,8 @@ export async function POST(req: Request) {
         p.services?.includes("EMERGENCY_PLUMBING") ?? false;
 
       const excludedBecauseEmergency =
-        severity === "emergency" && !emergencyCapable;
+        (internalSeverity === "EMERGENCY" || internalSeverity === "URGENT") &&
+        !emergencyCapable;
 
       const included =
         missing.length === 0 && !excludedBecauseEmergency;
@@ -79,7 +109,7 @@ export async function POST(req: Request) {
         reason: included
           ? "Included: supports all required services and passes emergency gate"
           : excludedBecauseEmergency
-          ? "Excluded: not emergency-capable"
+          ? `Excluded: not emergency-capable (required for ${internalSeverity.toLowerCase()} jobs)`
           : "Excluded: missing required services",
       };
     });
