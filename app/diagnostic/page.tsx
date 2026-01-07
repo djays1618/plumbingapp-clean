@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { computeDiagnosticResult } from "@/lib/diagnostics";
+import { mapDiagnosticCodeToServiceCode } from "@/lib/serviceCodeMapping";
 import { diagnosticTree } from "./diagnosticTree";
 import { resultCatalog } from "./resultCatalog";
 import type { JobPayload } from "./jobPayload";
@@ -135,6 +136,16 @@ export default function DiagnosticPage() {
     }
 
     if (option.result) {
+      // Handle emergency check step separately - it doesn't create a new issue
+      if (step.id === "emergency_check") {
+        // Emergency check is complete, go to summary
+        setMode("summary");
+        setAnswers({});
+        setStepId("location");
+        return;
+      }
+
+      // For other steps with results, create an issue
       const norm = normalizeFromWizardAnswers(updated);
 
       const diagnostic = computeDiagnosticResult({
@@ -146,11 +157,22 @@ export default function DiagnosticPage() {
 
       // Use option.result if it's a string (service code from diagnostic tree),
       // otherwise fall back to diagnostic.primaryServiceCode
-      const serviceCode = typeof option.result === "string" && option.result.trim().length > 0
+      const diagnosticCode = typeof option.result === "string" && option.result.trim().length > 0
         ? option.result
         : diagnostic.primaryServiceCode;
 
-      console.log("Adding issue:", { reported: norm.reported, serviceCode, emergency: norm.emergency });
+      // Skip if diagnosticCode is "EMERGENCY" or "NON_EMERGENCY" - these aren't service codes
+      if (diagnosticCode === "EMERGENCY" || diagnosticCode === "NON_EMERGENCY") {
+        setMode("summary");
+        setAnswers({});
+        setStepId("location");
+        return;
+      }
+
+      // Map diagnostic code to actual service code used in plumbers.json
+      const serviceCode = mapDiagnosticCodeToServiceCode(diagnosticCode);
+
+      console.log("Adding issue:", { reported: norm.reported, diagnosticCode, serviceCode, emergency: norm.emergency });
 
       setIssues((prev) => [
         ...prev,
